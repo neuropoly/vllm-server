@@ -1,12 +1,13 @@
 """Check the PDF proxy end to end: send a PDF to the server as an Anthropic "document" block (what Claude
 Code sends for an attached PDF, the case that fails with 400 without the proxy) and print the answer.
 
-  ~/llm-bench/proxy-venv/bin/python check_pdf.py paper.pdf "What colors are used in Figure 1?"
+  /opt/vllm/proxy-venv/bin/python check_pdf.py paper.pdf "What colors are used in Figure 1?"
 
-Then ~/llm-bench/logs/doc-proxy.log should have a "converted PDF" line.
+Then /opt/vllm/logs/doc-proxy.log should have a "converted PDF" line.
 """
 import base64
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -27,7 +28,7 @@ if len(sys.argv) < 2:
 pdf = Path(sys.argv[1])
 question = sys.argv[2] if len(sys.argv) > 2 else "In three sentences: what is this document about, and what does its first figure show?"
 port = setting("PORT", "8000")
-key = (Path.home() / "llm-bench" / "vllm.key").read_text().strip()
+key = Path(os.environ.get("KEY_FILE") or Path(os.environ.get("VLLM_ROOT", "/opt/vllm")) / "vllm.key").read_text().strip()
 
 models = json.load(urllib.request.urlopen(urllib.request.Request(
     f"http://127.0.0.1:{port}/v1/models", headers={"Authorization": f"Bearer {key}"})))

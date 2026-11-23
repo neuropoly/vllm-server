@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Start the vLLM server in a detached tmux session named "vllm", then wait until it answers.
-# Usage: bash serve_vllm.sh        (logs: ~/llm-bench/logs/vllm.log, attach: tmux attach -t vllm)
+# Usage: bash serve_vllm.sh        (logs: /opt/vllm/logs/vllm.log, attach: tmux attach -t vllm)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/vllm.env"
 source "$HERE/tmux_lib.sh"
 SESSION=vllm
-KEY=$LLMBENCH/vllm.key
-LOG=$LLMBENCH/logs/vllm.log
+KEY=$KEY_FILE
+LOG=$VLLM_ROOT/logs/vllm.log
 # With the PDF proxy (doc_proxy.py, see vllm.env), clients keep using PORT: the proxy listens there and
 # vLLM moves to VLLM_PORT. Without it (DOC_PROXY=0, or not installed), vLLM listens on PORT itself.
-PROXY_PY=$LLMBENCH/proxy-venv/bin/python
+PROXY_PY=$VLLM_ROOT/proxy-venv/bin/python
 VLLM_LISTEN=$PORT
 if [ "${DOC_PROXY:-0}" = 1 ]; then
     if [ -x "$PROXY_PY" ]; then VLLM_LISTEN=$VLLM_PORT
@@ -24,8 +24,8 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
     fi
     exit 0
 fi
-[ -x "$LLMBENCH/vllm-venv/bin/vllm" ] || { echo "vLLM not installed, run setup_vllm.sh first"; exit 1; }
-[ -s "$KEY" ] || { echo "missing $KEY, run setup_vllm.sh first"; exit 1; }
+[ -x "$VLLM_ROOT/vllm-venv/bin/vllm" ] || { echo "vLLM not installed, run setup_vllm.sh first"; exit 1; }
+[ -s "$KEY" ] || { echo "missing the lab key ($KEY): it is deployed separately, not by these scripts"; exit 1; }
 
 # vLLM grabs GPU_UTIL of the whole card at start-up and fails if that much is not free.
 read -r free total < <(nvidia-smi -i "$GPU" --query-gpu=memory.free,memory.total --format=csv,noheader,nounits | tr -d ',')
@@ -33,19 +33,21 @@ need=$(python3 -c "print(int($GPU_UTIL * $total))")
 if [ "$free" -lt "$need" ]; then
     echo "Card $GPU has $free MiB free, vLLM needs $need MiB (GPU_UTIL=$GPU_UTIL). Processes on it:"
     nvidia-smi -i "$GPU" --query-compute-apps=pid,process_name,used_memory --format=csv
-    echo "If it is our Ollama server: bash $HERE/stop_ollama.sh   (or lower GPU_UTIL in vllm.env)"
+    echo "Free the card (book it on the lab calendar), or lower GPU_UTIL in vllm.env."
     exit 1
 fi
 
 # FlashInfer compiles its Blackwell (sm_120) kernels at start-up with nvcc. The system one on tassan
 # (/usr/bin/nvcc) is CUDA 12.0, too old for sm_120; use the nvcc that pip installed into the venv.
-NVCC=$(ls "$LLMBENCH"/vllm-venv/lib/python3*/site-packages/nvidia/{cu*,cuda_nvcc}/bin/nvcc 2>/dev/null | head -1 || true)
+NVCC=$(ls "$VLLM_ROOT"/vllm-venv/lib/python3*/site-packages/nvidia/{cu*,cuda_nvcc}/bin/nvcc 2>/dev/null | head -1 || true)
 [ -n "$NVCC" ] || { echo "no nvcc inside the vLLM venv (FlashInfer would fall back to /usr/bin/nvcc 12.0 and fail)"; exit 1; }
 CUDA_HOME=$(dirname "$(dirname "$NVCC")")
 echo "CUDA toolkit for FlashInfer: $CUDA_HOME ($("$NVCC" --version | grep -o 'release [0-9.]*'))"
 
+# set_slot passes no environment: everything vLLM needs is exported again inside the slot shell.
 CMD="export CUDA_VISIBLE_DEVICES=$GPU HF_HOME=$HF_HOME CUDA_DEVICE_ORDER=PCI_BUS_ID \
-CUDA_HOME=$CUDA_HOME PATH=$CUDA_HOME/bin:\$PATH MAX_JOBS=${JIT_JOBS:-4} VLLM_API_KEY=\$(cat $KEY); source $LLMBENCH/vllm-venv/bin/activate; exec vllm serve $MODEL \
+XDG_CACHE_HOME=$XDG_CACHE_HOME FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE \
+CUDA_HOME=$CUDA_HOME PATH=$CUDA_HOME/bin:\$PATH MAX_JOBS=${JIT_JOBS:-4} VLLM_API_KEY=\$(cat $KEY); source $VLLM_ROOT/vllm-venv/bin/activate; exec vllm serve $MODEL \
 --served-model-name $SERVED_NAME --host 127.0.0.1 --port $VLLM_LISTEN --max-model-len $MAX_MODEL_LEN \
 --gpu-memory-utilization $GPU_UTIL --max-num-seqs $MAX_NUM_SEQS --enable-prefix-caching \
 --enable-auto-tool-choice --tool-call-parser $TOOL_PARSER $EXTRA_ARGS"
@@ -53,8 +55,8 @@ echo "=== $(date -Is) start $MODEL as $SERVED_NAME on GPU $GPU ($SLOT_CMD)" >> "
 start_session "$SESSION" "$LOG" "$CMD"
 if [ "$VLLM_LISTEN" != "$PORT" ] && ! tmux has-session -t doc-proxy 2>/dev/null; then
     # Started right away: it answers 503 until vLLM is up, and the wait below goes through it.
-    echo "=== $(date -Is) start PDF proxy on 127.0.0.1:$PORT -> vLLM on $VLLM_LISTEN" >> "$LLMBENCH/logs/doc-proxy.log"
-    start_session doc-proxy "$LLMBENCH/logs/doc-proxy.log" \
+    echo "=== $(date -Is) start PDF proxy on 127.0.0.1:$PORT -> vLLM on $VLLM_LISTEN" >> "$VLLM_ROOT/logs/doc-proxy.log"
+    start_session doc-proxy "$VLLM_ROOT/logs/doc-proxy.log" \
         "export DOC_PROXY_PORT=$PORT VLLM_URL=http://127.0.0.1:$VLLM_LISTEN PDF_PAGE_IMAGES=${PDF_PAGE_IMAGES:-auto} \
 MODEL=$MODEL HF_HOME=$HF_HOME; exec $PROXY_PY $HERE/doc_proxy.py"
 fi
@@ -70,7 +72,7 @@ for i in $(seq 1 $((${STARTUP_TIMEOUT:-2700} / 5))); do
         nvidia-smi -i "$GPU" --query-gpu=index,memory.used,memory.total --format=csv
         trap - INT TERM
         # The agents' web search goes with it, if installed (setup_search.sh). Its failure doesn't stop vLLM.
-        if [ -x "$LLMBENCH/search/mcp-venv/bin/python" ]; then
+        if [ -x "$VLLM_ROOT/search/mcp-venv/bin/python" ]; then
             bash "$HERE/serve_search.sh" || echo "Web search did not start (vLLM is fine). Retry: bash $HERE/serve_search.sh"
         fi
         exit 0

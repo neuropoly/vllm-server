@@ -4,13 +4,14 @@
 #   bash switch_model.sh <name>           download it if needed, then restart vLLM on it
 #   bash switch_model.sh default          back to the MODEL in vllm.env
 #   add --no-start to only record the choice (the next serve_vllm.sh uses it)
-# The choice is written to ~/llm-bench/model.env, outside lab_server/, so redeploying the scripts keeps
+#   add --force to restart even if requests are running (see stop_vllm.sh)
+# The choice is written to /opt/vllm/model.env, outside lab_server/, so redeploying the scripts keeps
 # it. Run it from your tmux like serve_vllm.sh: it waits until the new model answers.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/vllm.env"
-CHOICE=$LLMBENCH/model.env
-KEY=$LLMBENCH/vllm.key
+CHOICE=$VLLM_ROOT/model.env
+KEY=$KEY_FILE
 
 trim() { local s=$1; s=${s#"${s%%[![:space:]]*}"}; s=${s%"${s##*[![:space:]]}"}; printf '%s' "$s"; }
 
@@ -47,18 +48,27 @@ list() {
     if [ -e "$CHOICE" ]; then echo "Set with switch_model.sh ($CHOICE). Back to vllm.env's model: bash $0 default"
     else echo "No switch made: this is the model in vllm.env."; fi
     if [ -n "$now" ]; then echo "vLLM is up, serving $now."
-    elif running; then echo "vLLM is starting (or stuck): tail -f $LLMBENCH/logs/vllm.log"
+    elif running; then echo "vLLM is starting (or stuck): tail -f $VLLM_ROOT/logs/vllm.log"
     else echo "vLLM is stopped."; fi
 }
 
 restart() {
-    if running; then bash "$HERE/stop_vllm.sh"; fi
+    if running && ! bash "$HERE/stop_vllm.sh" "${force[@]}"; then
+        echo "Not switched yet: the choice is saved, but vLLM keeps serving the old model."
+        echo "Later: bash $HERE/stop_vllm.sh && bash $HERE/serve_vllm.sh   (or now: bash $0 $SERVED_NAME --force)"
+        exit 1
+    fi
     bash "$HERE/serve_vllm.sh"
 }
 
-want=${1:-list}; no_start=0
-[ "${2:-}" = --no-start ] && no_start=1
-[ "$want" = --no-start ] && { want=${2:-list}; no_start=1; }
+want=list; no_start=0; force=()
+for arg in "$@"; do
+    case $arg in
+        --no-start) no_start=1 ;;
+        --force) force=(--force) ;;
+        *) want=$arg ;;
+    esac
+done
 # What to offer as "go back" if the new model fails: the one running now, else the one set.
 now=$(served_now)
 previous=${now:-$SERVED_NAME}
@@ -75,9 +85,9 @@ case $want in
         IFS='|' read -r name repo parser extra note <<< "$line"
         if [ "$name" != "$now" ] || [ "$name" != "$SERVED_NAME" ]; then
             # Download first: if it fails, the current setting is left as it was.
-            [ -x "$LLMBENCH/vllm-venv/bin/hf" ] || { echo "vLLM is not installed: run setup_vllm.sh first"; exit 1; }
+            [ -x "$VLLM_ROOT/vllm-venv/bin/hf" ] || { echo "vLLM is not installed: run setup_vllm.sh first"; exit 1; }
             downloaded "$repo" || echo "Downloading $repo into $HF_HOME (first time: can take a while)..."
-            "$LLMBENCH/vllm-venv/bin/hf" download "$repo" >/dev/null
+            "$VLLM_ROOT/vllm-venv/bin/hf" download "$repo" >/dev/null
             {
                 echo "# Written by switch_model.sh on $(date '+%Y-%m-%d %H:%M'). Delete this file to go back to vllm.env's model."
                 printf 'MODEL=%q\nSERVED_NAME=%q\nTOOL_PARSER=%q\nEXTRA_ARGS=%q\n' "$repo" "$name" "$parser" "$extra"

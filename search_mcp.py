@@ -10,7 +10,7 @@ replaces it. Clients reach it through the same SSH tunnel as vLLM and send the l
 Settings (environment, set by serve_search.sh from vllm.env):
   SEARCH_MCP_PORT   port on 127.0.0.1 (default 8002)
   SEARXNG_URL       the SearXNG instance (default http://127.0.0.1:8888)
-  LAB_KEY_FILE      the lab key (default ~/llm-bench/vllm.key)
+  LAB_KEY_FILE      the lab key (default /opt/vllm/vllm.key)
 """
 import ipaddress
 import os
@@ -25,7 +25,7 @@ from mcp.server.fastmcp import FastMCP
 
 PORT = int(os.environ.get("SEARCH_MCP_PORT", "8002"))
 SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://127.0.0.1:8888").rstrip("/")
-KEY_FILE = Path(os.environ.get("LAB_KEY_FILE", Path.home() / "llm-bench" / "vllm.key"))
+KEY_FILE = Path(os.environ.get("LAB_KEY_FILE", "/opt/vllm/vllm.key"))
 
 MAX_PAGE_BYTES = 5_000_000      # stop downloading a page past this
 MAX_REDIRECTS = 5

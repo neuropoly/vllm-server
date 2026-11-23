@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# One-time install of the agents' web search under ~/llm-bench: SearXNG (a self-hosted metasearch
+# One-time install of the agents' web search under VLLM_ROOT: SearXNG (a self-hosted metasearch
 # engine: no API key, no account) and the lab-search MCP server (search_mcp.py). No root.
 # Safe to run again: it updates SearXNG and keeps its settings. Usage: bash setup_search.sh
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/vllm.env"
-mkdir -p "$LLMBENCH"/{bin,logs,search}
-export PATH=$LLMBENCH/bin:$PATH
-SRC=$LLMBENCH/search/searxng            # SearXNG source (it is installed from git, as its docs do)
-SX_VENV=$LLMBENCH/search/searxng-venv
-MCP_VENV=$LLMBENCH/search/mcp-venv      # separate venv: SearXNG pins its own httpx
-SETTINGS=$LLMBENCH/search/settings.yml
+mkdir -p "$VLLM_ROOT"/{bin,logs,search}
+export PATH=$VLLM_ROOT/bin:$PATH
+SRC=$VLLM_ROOT/searxng                   # SearXNG source, its own git clone (installed from git, as its docs do)
+SX_VENV=$VLLM_ROOT/search/searxng-venv
+MCP_VENV=$VLLM_ROOT/search/mcp-venv      # separate venv: SearXNG pins its own httpx
+SETTINGS=$VLLM_ROOT/search/settings.yml
 
 if ! command -v uv >/dev/null; then
-    echo "== installing uv into $LLMBENCH/bin"
-    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$LLMBENCH/bin" UV_NO_MODIFY_PATH=1 sh
+    echo "== installing uv into $VLLM_ROOT/bin"
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$VLLM_ROOT/bin" UV_NO_MODIFY_PATH=1 sh
 fi
 
 echo "== SearXNG"
@@ -54,5 +54,5 @@ echo "== MCP server"
 # mcp 2.x renamed FastMCP (search_mcp.py uses the 1.x API)
 uv pip install -q --python "$MCP_VENV/bin/python" "mcp>=1.10,<2" httpx trafilatura uvicorn
 
-[ -s "$LLMBENCH/vllm.key" ] || echo "Note: no lab key yet ($LLMBENCH/vllm.key): setup_vllm.sh creates it, the MCP server needs it."
+[ -s "$KEY_FILE" ] || echo "Note: no lab key at $KEY_FILE yet (deployed separately): the MCP server needs it."
 echo "Done. Next: bash $HERE/serve_search.sh   (serve_vllm.sh also starts it)"
